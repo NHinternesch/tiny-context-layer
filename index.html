@@ -450,10 +450,6 @@ pre.code {
     background: var(--raised); border-radius: 8px;
     font: 11.5px/1.55 var(--mono); white-space: pre-wrap; word-break: break-word;
 }
-.uses { list-style: none; margin: 0; padding: 0; font-size: 13px; color: var(--ink-2); }
-.uses li { padding: 8px 0; border-top: 1px solid var(--line); }
-.uses li:first-child { border-top: none; padding-top: 0; }
-.uses b { color: var(--ink); font-weight: 700; }
 @media (max-width: 560px) {
     .file-row { flex-wrap: wrap; }
     .file-actions { margin-left: 0; }
@@ -1316,13 +1312,6 @@ function renderExport() {
     const core = coreMd(ctx);
     const tokens = tokenCount(core);
 
-    const names = h('div', { class: 'kinds', role: 'group', 'aria-label': 'Core file name' },
-        CORE_FILES.map(f => h('button', { type: 'button', 'aria-pressed': String(ctx.coreFile === f), onclick: () => {
-            ctx.coreFile = f;
-            commit();
-            renderExport();
-        } }, f)));
-
     const copyCore = h('button', { class: 'btn btn-primary', onclick: async () => {
         const ok = await copyText(coreMd(ctx));
         flash(copyCore, ok ? 'Copied. Paste it into your agent’s instructions.' : 'Copy failed. Use Download instead.');
@@ -1359,15 +1348,9 @@ function renderExport() {
     box.append(
         closeX('dlgExport'),
         h('h2', null, 'Export and integration'),
-        h('p', { class: 'sub' }, 'Your context layer lives in this browser. Download the files to keep it. Keep module files next to the core file so its links work.'),
-        h('div', { class: 'field', style: 'margin-bottom:16px' }, h('span', null, 'Core file name'), names),
+        h('p', { class: 'sub' }, 'Paste core.md as system prompt. Local files live in the same directory.'),
         h('div', { class: 'quick' }, copyCore, dlAll),
-        h('div', { class: 'files' }, fileRows),
-        h('h3', null, 'Where it goes'),
-        h('ul', { class: 'uses' },
-            h('li', null, h('b', null, 'Chat apps. '), 'Paste the core into custom instructions or project instructions. Local file links don’t resolve there. Web and connector entries work where the app can fetch or has the connector.'),
-            h('li', null, h('b', null, 'Claude Code. '), 'Save as CLAUDE.md in ~/.claude/ for every project, or in a project root. Module files go next to it.'),
-            h('li', null, h('b', null, 'Codex, Cursor and other coding agents. '), 'Save as AGENTS.md where the agent reads it, usually the project root. Module files go next to it.')));
+        h('div', { class: 'files' }, fileRows));
 }
 
 /* ----- Open ----- */
