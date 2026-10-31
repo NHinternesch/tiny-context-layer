@@ -406,7 +406,7 @@ dialog[open] { animation: dlgIn .2s cubic-bezier(.2, .8, .2, 1); }
 .paste .dlg-actions { margin-top: 10px; }
 
 /* Export */
-.quick { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
+.quick { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 0; }
 .files { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .file { padding: 12px 14px; }
 .file + .file { border-top: 1px solid var(--line); }
@@ -804,6 +804,51 @@ function downloadText(filename, text) {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+// Every export file in one folder, as a ZIP: browsers can't download a folder itself.
+// Stored without compression, which is plenty for a few small Markdown files.
+const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+    return t;
+})();
+function crc32(b) { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC_TABLE[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function zipBlob(files) {
+    const enc = new TextEncoder(), local = [], central = [];
+    const d = new Date();
+    const time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+    const date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+    let offset = 0;
+    for (const f of files) {
+        const name = enc.encode(f.name), data = enc.encode(f.text), crc = crc32(data);
+        const lh = new DataView(new ArrayBuffer(30));
+        [[0, 0x04034b50, 4], [4, 20, 2], [6, 0x0800, 2], [8, 0, 2], [10, time, 2], [12, date, 2], [14, crc, 4],
+         [18, data.length, 4], [22, data.length, 4], [26, name.length, 2], [28, 0, 2]]
+            .forEach(([o, v, n]) => n === 4 ? lh.setUint32(o, v, true) : lh.setUint16(o, v, true));
+        const ch = new DataView(new ArrayBuffer(46));
+        [[0, 0x02014b50, 4], [4, 20, 2], [6, 20, 2], [8, 0x0800, 2], [10, 0, 2], [12, time, 2], [14, date, 2], [16, crc, 4],
+         [20, data.length, 4], [24, data.length, 4], [28, name.length, 2], [30, 0, 2], [32, 0, 2], [34, 0, 2], [36, 0, 2], [38, 0, 4], [42, offset, 4]]
+            .forEach(([o, v, n]) => n === 4 ? ch.setUint32(o, v, true) : ch.setUint16(o, v, true));
+        local.push(lh, name, data);
+        central.push(ch, name);
+        offset += 30 + name.length + data.length;
+    }
+    const size = central.reduce((n, x) => n + x.byteLength, 0);
+    const end = new DataView(new ArrayBuffer(22));
+    [[0, 0x06054b50, 4], [4, 0, 2], [6, 0, 2], [8, files.length, 2], [10, files.length, 2], [12, size, 4], [16, offset, 4], [20, 0, 2]]
+        .forEach(([o, v, n]) => n === 4 ? end.setUint32(o, v, true) : end.setUint16(o, v, true));
+    return new Blob([...local, ...central, end], { type: 'application/zip' });
+}
+const FOLDER = FILES_DIR.replace(/^~\//, '').replace(/\/$/, '');
+function downloadAll() {
+    const blob = zipBlob(exportFiles().map(f => ({ name: FOLDER + '/' + f.name, text: f.get() })));
+    const url = URL.createObjectURL(blob);
+    const a = h('a', { href: url, download: FOLDER + '.zip', style: 'display:none' });
+    (document.querySelector('dialog[open]') || document.body).append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    markExported();
 }
 async function copyText(text) {
     try { await navigator.clipboard.writeText(text); return true; }
@@ -1244,19 +1289,7 @@ function renderExport() {
     const box = $('exportBody');
     box.textContent = '';
     const files = exportFiles();
-    const core = coreMd(ctx);
-    const tokens = tokenCount(core);
-
-    const copyCore = h('button', { class: 'btn btn-primary', onclick: async () => {
-        const ok = await copyText(coreMd(ctx));
-        flash(copyCore, ok ? 'Copied. Paste it into your agent’s instructions.' : 'Copy failed. Use Download instead.');
-        if (ok && files.length === 1) markExported();
-    } }, `Copy core (~${tokens.toLocaleString()} tokens)`);
-    const dlAll = h('button', { class: 'btn', onclick: () => {
-        files.forEach((f, i) => setTimeout(() => downloadText(f.name, f.get()), i * 250));
-        markExported();
-        flash(dlAll, `Downloading ${plural(files.length, 'file')}…`);
-    } }, files.length === 1 ? 'Download ' + files[0].name : `Download all ${files.length} files`);
+    const dlAll = h('button', { class: 'btn btn-primary', onclick: () => { downloadAll(); flash(dlAll, `Downloading ${FOLDER}.zip…`); } }, 'Download all files');
 
     const fileRows = files.map(f => {
         const text = f.get();
@@ -1284,9 +1317,9 @@ function renderExport() {
         closeX('dlgExport'),
         h('h2', null, 'Export and integration'),
         h('p', { class: 'sub', style: files.length > 1 ? 'margin-bottom:6px' : null }, `Paste ${ctx.coreFile} as system prompt, instructions, preferences, CLAUDE.md, AGENTS.md etc.`),
-        files.length > 1 ? h('p', { class: 'sub' }, `Local source files default to ${FILES_DIR} in your user directory. Update ${ctx.coreFile} with custom locations.`) : null,
-        h('div', { class: 'quick' }, copyCore, dlAll),
-        h('div', { class: 'files' }, fileRows));
+        files.length > 1 ? h('p', { class: 'sub' }, `Local source files default to ${FILES_DIR} in user directory. Update ${ctx.coreFile} with custom locations.`) : null,
+        h('div', { class: 'files' }, fileRows),
+        h('div', { class: 'quick' }, dlAll));
 }
 
 /* ----- Open ----- */
@@ -1820,14 +1853,12 @@ const AGENT_TOOLS = [
     {
         name: 'download_files',
         title: 'Download the files',
-        description: 'Saves the core file and every local module file to the user’s device, ready to hand to their agents. To read the content yourself, use get_context instead.',
+        description: 'Saves the core file and every local module file to the user’s device as tiny-context-layer-files.zip, a folder ready to move into their home directory. To read the content yourself, use get_context instead.',
         inputSchema: { type: 'object', properties: {} },
         execute: async () => {
             if (!ctx) return NO_CTX;
-            const files = exportFiles();
-            files.forEach((f, i) => setTimeout(() => downloadText(f.name, f.get()), i * 250));
-            markExported();
-            return { downloaded: files.map(f => f.name) };
+            downloadAll();
+            return { downloaded: FOLDER + '.zip', files: exportFiles().map(f => FOLDER + '/' + f.name) };
         }
     }
 ];
