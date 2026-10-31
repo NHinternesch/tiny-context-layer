@@ -1016,7 +1016,7 @@ function renderBoard() {
         ctx.sections.map(x => {
             const d = CORE_SECTIONS.find(y => y.key === x.key);
             const ta = h('textarea', { class: 'sec-edit', rows: 1, value: x.points.join('\n'), 'aria-label': x.heading,
-                placeholder: d ? 'Add ' + d.hint + '. One point per line.' : 'One point per line.' });
+                placeholder: (d ? 'Add ' + d.hint + '.\n' : '') + 'One point per line.' });
             ta.addEventListener('input', () => { x.points = linesOf(ta.value); fitTa(ta); edited(); });
             return h('label', { class: 'sec-row', 'data-sec': x.key }, h('b', null, x.heading), h('em'), ta);
         }),
