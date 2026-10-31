@@ -253,29 +253,38 @@ h1.display {
 .link-path { fill: none; stroke: var(--edge); stroke-width: 1.2; stroke-dasharray: 4 4; transition: stroke .15s, opacity .15s; }
 .link-path.hl { stroke: var(--edge-hi); animation: flowIn .9s linear infinite; }
 .core-card {
-    position: relative; z-index: 1; width: min(560px, 100%);
+    position: relative; z-index: 1; width: min(680px, 100%);
     background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow);
 }
-.core-head {
-    display: flex; align-items: center; gap: 8px; width: 100%; padding: 14px 16px 10px;
-    border: 0; border-radius: 14px 14px 0 0; background: none; cursor: pointer; text-align: left;
-}
-.core-head:hover, .core-head.sel { background: var(--raised); }
+.core-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px 10px; }
 .core-head svg { width: 18px; height: 18px; flex-shrink: 0; }
-.core-name { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.core-label { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+.core-name-input {
+    min-width: 0; max-width: 100%; margin-left: -7px; padding: 2px 5px; border: 0; border-radius: 6px;
+    background: none; outline: none; font-size: 15px; font-weight: 700; letter-spacing: -0.01em;
+    transition: background .12s;
+}
+.core-name-input:hover, .core-name-input:focus { background: var(--raised); }
 .tok { flex-shrink: 0; font-size: 12px; color: var(--ink-3); }
 .meter-wrap { padding: 0 16px 12px; }
-.core-head.sel + .meter-wrap { background: var(--raised); }
 .meter { height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
 .meter i { display: block; height: 100%; background: var(--ink); transition: width .3s; }
 .meter.over i { background: repeating-linear-gradient(90deg, var(--ink) 0 6px, transparent 6px 9px); }
 .sec-row {
     position: relative; display: grid; grid-template-columns: 1fr auto; column-gap: 12px; align-items: baseline;
     width: 100%; padding: 11px 16px 12px; border: 0; border-top: 1px solid var(--line);
-    background: none; text-align: left; cursor: pointer;
+    background: none; text-align: left; cursor: text;
 }
-.sec-row:hover { background: var(--raised); }
-.sec-row.sel { background: var(--raised); box-shadow: inset 2px 0 0 var(--ink); }
+.sec-row:hover { background: color-mix(in oklab, var(--raised) 50%, var(--surface)); }
+.sec-row:focus-within { background: var(--raised); box-shadow: inset 2px 0 0 var(--ink); }
+.sec-edit {
+    grid-column: 1 / -1; display: block; width: 100%; margin-top: 3px; padding: 0;
+    border: 0; background: none; outline: none; resize: none; overflow: hidden;
+    color: var(--ink-2); font-size: 13px; line-height: 1.5;
+}
+.sec-edit:focus { color: var(--ink); }
+.sec-edit::placeholder { color: var(--ink-3); }
+@media (max-width: 720px) { .sec-edit, .core-name-input { font-size: 16px; } }
 .sec-row:last-child { border-radius: 0 0 14px 14px; }
 .sec-row b { font-weight: 700; font-size: 13.5px; }
 .sec-row em { font-style: normal; font-size: 12px; color: var(--ink-3); }
@@ -368,7 +377,7 @@ body.panel-open .site-foot { display: none; }
     }
 }
 .panel-head { display: flex; align-items: center; justify-content: flex-end; margin-bottom: -6px; }
-.name-input, .name-static {
+.name-input {
     width: 100%; padding: 4px 0; margin: 0 0 12px;
     border: none; border-bottom: 1px solid transparent; background: none; outline: none;
     font-size: 22px; font-weight: 700; letter-spacing: -0.02em;
@@ -701,7 +710,7 @@ function lsDel(k) { try { localStorage.removeItem(k); } catch (e) { /* ignore */
    Store
    ctx: { name, coreFile, updated, sections: [{key, heading, points}],
           entries: [{id, title, content, kind, location, access, updated, sections: [{heading, points}]}] }
-   ui.selected: 'meta' (the core file), 's:<section key>' or 'e:<entry id>'
+   ui.selected: 'e:<entry id>', the knowledge map entry open in the panel
    ================================================================ */
 let ctx = null;
 const ui = { selected: null, focusLast: false };
@@ -732,8 +741,6 @@ const secByKey = key => ctx.sections.find(x => x.key === key);
 const entById = id => ctx.entries.find(x => x.id === id);
 function itemOf(ref) {
     if (!ctx || !ref) return null;
-    if (ref === 'meta') return { t: 'meta' };
-    if (ref.startsWith('s:')) { const x = secByKey(ref.slice(2)); return x ? { t: 'section', s: x } : null; }
     if (ref.startsWith('e:')) { const x = entById(ref.slice(2)); return x ? { t: 'entry', e: x } : null; }
     return null;
 }
@@ -989,23 +996,34 @@ function renderBoard() {
     box.textContent = '';
     if (!ctx) return;
     const sel = ui.selected;
-    const tokens = tokenCount(coreMd(ctx));
-    const over = tokens > TOKEN_BUDGET;
+    // Typing in the core updates the files and the stats, not the board, so focus stays put.
+    const edited = () => { commit({ board: false, panel: false }); updateCoreStats(); };
+
+    const nameIn = h('input', { class: 'core-name-input', value: ctx.name, size: Math.max(3, ctx.name.length),
+        autocomplete: 'off', spellcheck: 'false', 'aria-label': 'What agents call you', title: 'What agents call you' });
+    nameIn.addEventListener('input', () => {
+        nameIn.size = Math.max(3, nameIn.value.length);
+        const v = nameIn.value.trim();
+        if (v) { ctx.name = v; edited(); }
+    });
+    nameIn.addEventListener('change', () => { if (!nameIn.value.trim()) { nameIn.value = ctx.name; nameIn.size = Math.max(3, ctx.name.length); } });
+    nameIn.addEventListener('keydown', ev => { if (ev.key === 'Enter') nameIn.blur(); });
 
     const core = h('section', { class: 'core-card', 'aria-label': 'Core, always on' },
-        h('button', { class: 'core-head' + (sel === 'meta' ? ' sel' : ''), 'data-ref': 'meta', title: 'Name and file', onclick: () => select('meta') },
+        h('div', { class: 'core-head' },
             logoEl(),
-            h('span', { class: 'core-name' }, 'Core: ' + ctx.name),
+            h('span', { class: 'core-label' }, 'Core:'),
+            nameIn,
             h('span', { class: 'grow' }),
-            h('span', { class: 'tok' }, 'Always on · ~' + tokens.toLocaleString() + ' tokens')),
-        h('div', { class: 'meter-wrap' },
-            h('div', { class: 'meter' + (over ? ' over' : ''),
-                title: over ? `Over ${TOKEN_BUDGET.toLocaleString()} tokens. Move detail into the knowledge map.` : `~${tokens} of a ${TOKEN_BUDGET.toLocaleString()} token budget` },
-                h('i', { style: `width:${Math.min(100, tokens / TOKEN_BUDGET * 100).toFixed(1)}%` }))),
-        ctx.sections.map(x => h('button', { class: 'sec-row' + (sel === 's:' + x.key ? ' sel' : ''), 'data-ref': 's:' + x.key, onclick: () => select('s:' + x.key) },
-            h('b', null, x.heading),
-            h('em', null, x.points.length ? String(x.points.length) : ''),
-            h('span', { class: 'snip' + (x.points.length ? '' : ' faint') }, x.points.length ? x.points.join(' · ') : emptyHint(x)))),
+            h('span', { class: 'tok', id: 'coreTok' })),
+        h('div', { class: 'meter-wrap' }, h('div', { class: 'meter', id: 'coreMeter' }, h('i'))),
+        ctx.sections.map(x => {
+            const d = CORE_SECTIONS.find(y => y.key === x.key);
+            const ta = h('textarea', { class: 'sec-edit', rows: 1, value: x.points.join('\n'), 'aria-label': x.heading,
+                placeholder: d ? 'Add ' + d.hint + '. One point per line.' : 'One point per line.' });
+            ta.addEventListener('input', () => { x.points = linesOf(ta.value); fitTa(ta); edited(); });
+            return h('label', { class: 'sec-row', 'data-sec': x.key }, h('b', null, x.heading), h('em'), ta);
+        }),
         h('div', { class: 'sec-row map-row' },
             h('b', null, 'Knowledge map'),
             h('em', null, String(ctx.entries.length)),
@@ -1028,6 +1046,8 @@ function renderBoard() {
             h('span', null, 'Loaded when a task needs it.')));
 
     box.append(s('svg', { class: 'links', id: 'links', 'aria-hidden': 'true' }), core, map);
+    updateCoreStats();
+    box.querySelectorAll('.sec-edit').forEach(fitTa);
     drawLinks();
 }
 function drawLinks() {
@@ -1061,13 +1081,25 @@ function drawLinks() {
     }
 }
 let linksRaf = 0;
-const queueLinks = () => { cancelAnimationFrame(linksRaf); linksRaf = requestAnimationFrame(drawLinks); };
+const queueLinks = () => {
+    cancelAnimationFrame(linksRaf);
+    linksRaf = requestAnimationFrame(() => { $('boardInner').querySelectorAll('.sec-edit').forEach(fitTa); drawLinks(); });
+};
 if (window.ResizeObserver) new ResizeObserver(queueLinks).observe($('boardInner'));
 window.addEventListener('resize', queueLinks);
 
-function emptyHint(x) {
-    const d = CORE_SECTIONS.find(y => y.key === x.key);
-    return d ? 'Empty · Add ' + d.hint : 'Empty';
+function fitTa(ta) { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
+function updateCoreStats() {
+    const tokens = tokenCount(coreMd(ctx)), over = tokens > TOKEN_BUDGET;
+    $('coreTok').textContent = 'Always on · ~' + tokens.toLocaleString() + ' tokens';
+    const m = $('coreMeter');
+    m.classList.toggle('over', over);
+    m.title = over ? `Over ${TOKEN_BUDGET.toLocaleString()} tokens. Move detail into the knowledge map.` : `~${tokens} of a ${TOKEN_BUDGET.toLocaleString()} token budget`;
+    m.firstChild.style.width = Math.min(100, tokens / TOKEN_BUDGET * 100).toFixed(1) + '%';
+    for (const x of ctx.sections) {
+        const em = $('boardInner').querySelector(`.sec-row[data-sec="${x.key}"] em`);
+        if (em) em.textContent = x.points.length ? String(x.points.length) : '';
+    }
 }
 function select(ref) {
     // The board is rebuilt, so keep keyboard focus on the item that was picked.
@@ -1107,9 +1139,7 @@ function renderPanel() {
     p.textContent = '';
     p.dataset.ref = ref;
     const close = h('button', { class: 'btn btn-ghost btn-sm btn-icon', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => select(null) }, '×');
-    if (it.t === 'meta') panelMeta(p, close);
-    else if (it.t === 'section') panelSection(p, close, it.s);
-    else panelEntry(p, close, it.e);
+    panelEntry(p, close, it.e);
     requestAnimationFrame(() => p.querySelectorAll('textarea').forEach(autosize));
     p.scrollTop = keepScroll;
     if (ui.focusLast) {
@@ -1119,68 +1149,9 @@ function renderPanel() {
     }
 }
 
-function panelMeta(p, close) {
-    const pre = h('pre', { class: 'code' });
-    const tok = h('span', { class: 'lc' });
-    const upd = () => { const md = coreMd(ctx); pre.textContent = md; tok.textContent = '~' + tokenCount(md).toLocaleString() + ' tokens'; };
-    const nameIn = h('input', { class: 'input', value: ctx.name, autocomplete: 'off', placeholder: 'e.g. Michael' });
-    nameIn.addEventListener('input', () => {
-        const v = nameIn.value.trim();
-        if (!v) return;
-        ctx.name = v;
-        commit({ panel: false });
-        upd();
-    });
-    nameIn.addEventListener('change', () => { if (!nameIn.value.trim()) nameIn.value = ctx.name; });
-    const files = h('div', { class: 'kinds', role: 'group', 'aria-label': 'File name' },
-        CORE_FILES.map(f => h('button', { type: 'button', 'aria-pressed': String(ctx.coreFile === f), onclick: () => { ctx.coreFile = f; commit(); } }, f)));
-    p.append(
-        h('div', { class: 'panel-head' }, close),
-        h('div', { class: 'name-static' }, ctx.coreFile),
-        h('div', { class: 'stack' },
-            field('What agents call you', nameIn),
-            h('div', { class: 'field' }, h('span', null, 'File name'), files)),
-        h('p', { class: 'form-note' }, 'core.md works anywhere. AGENTS.md is read by Codex, Cursor and other coding agents. CLAUDE.md is read by Claude Code.'),
-        h('div', { class: 'section-title' }, h('span', null, 'Preview'), tok),
-        pre);
-    upd();
-}
-
-function panelSection(p, close, x) {
-    const fixed = CORE_SECTIONS.find(d => d.key === x.key);
-    const pre = h('pre', { class: 'code' });
-    const upd = () => { pre.textContent = sectionMd(x) || 'Empty sections are left out of the file.'; };
-    let title;
-    if (fixed) title = h('div', { class: 'name-static' }, x.heading);
-    else {
-        title = h('input', { class: 'name-input', value: x.heading, 'aria-label': 'Heading', autocomplete: 'off', spellcheck: 'false' });
-        title.addEventListener('input', () => { const v = title.value.trim(); if (!v) return; x.heading = v; commit({ panel: false }); upd(); });
-        title.addEventListener('keydown', ev => { if (ev.key === 'Enter') title.blur(); });
-    }
-    const ta = h('textarea', { class: 'textarea', rows: 5, placeholder: fixed ? fixed.ph : 'One point per line', value: x.points.join('\n'), 'aria-label': x.heading });
-    ta.addEventListener('input', () => { x.points = linesOf(ta.value); autosize(ta); commit({ panel: false }); upd(); });
-
-    p.append(
-        h('div', { class: 'panel-head' }, close),
-        title,
-        ta,
-        h('div', { class: 'section-title' }, h('span', null, 'Markdown')),
-        pre);
-    if (!fixed) {
-        p.append(h('div', { class: 'danger-zone' }, h('button', { class: 'btn btn-ghost btn-sm btn-danger', onclick: () => {
-            ctx.sections = ctx.sections.filter(y => y !== x);
-            ui.selected = null;
-            commit();
-        } }, 'Remove section')));
-    }
-    upd();
-}
-
 function panelEntry(p, close, e) {
     const k = KINDS[e.kind];
-    const pre = h('pre', { class: 'code' });
-    const upd = () => { pre.textContent = entryMd(e); };
-    const edited = () => { touch(e); commit({ panel: false }); upd(); };
+    const edited = () => { touch(e); commit({ panel: false }); };
 
     const nameIn = h('input', { class: 'name-input', value: e.title, 'aria-label': 'Title', autocomplete: 'off', spellcheck: 'false' });
     nameIn.addEventListener('input', () => { const v = nameIn.value.trim(); if (!v) return; e.title = v; edited(); });
@@ -1211,9 +1182,7 @@ function panelEntry(p, close, e) {
         field('Content', content),
         h('p', { class: 'form-note' }, 'What the source holds. No summary of it: the source stays the only point of truth.'),
         h('div', { class: 'section-title' }, h('span', null, 'Source')),
-        h('div', { class: 'stack' }, pills, field('Location', locIn), field('Access', accIn)),
-        h('div', { class: 'section-title' }, h('span', null, 'Markdown')),
-        pre);
+        h('div', { class: 'stack' }, pills, field('Location', locIn), field('Access', accIn)));
 
     if (e.kind === 'file') {
         const file = moduleFile(e);
@@ -1226,15 +1195,11 @@ function panelEntry(p, close, e) {
             const x = h('button', { class: 'x', title: 'Remove section', 'aria-label': 'Remove section', onclick: () => { e.sections.splice(i, 1); touch(e); commit(); } }, '×');
             mods.append(h('div', { class: 'mod-sec' }, h('div', { class: 'mod-row' }, hIn, x), ta));
         });
-        const filePre = h('pre', { class: 'code' });
-        const det = h('details', null, h('summary', null, 'Preview ' + basename(file)), filePre);
-        det.addEventListener('toggle', () => { if (det.open) filePre.textContent = moduleMd(ctx, e); });
         p.append(
             h('div', { class: 'section-title' }, h('span', null, 'File'), h('span', { class: 'lc' }, basename(file))),
             e.sections.length ? mods : h('p', { class: 'form-note', style: 'margin:0 0 10px' }, 'This file ships next to ' + ctx.coreFile + '. Give it a few sections.'),
             h('div', { class: 'row', style: 'margin-top:10px' },
-                h('button', { class: 'btn btn-sm', onclick: () => { e.sections.push({ heading: '', points: [] }); touch(e); ui.focusLast = true; commit(); } }, '+ Add section')),
-            det);
+                h('button', { class: 'btn btn-sm', onclick: () => { e.sections.push({ heading: '', points: [] }); touch(e); ui.focusLast = true; commit(); } }, '+ Add section')));
     }
 
     const dz = h('div', { class: 'danger-zone' });
@@ -1252,7 +1217,6 @@ function panelEntry(p, close, e) {
     };
     renderDz(false);
     p.append(dz);
-    upd();
 }
 
 /* ================================================================
@@ -1637,11 +1601,10 @@ function startFresh(c) {
     $('banner').hidden = true;
     setCtx(c);
 }
-// Opens the core file panel so the first thing to fill in is the name.
+// The name in the core card is the first thing to fill in.
 function startBlank() {
     startFresh(newCtx());
-    select('meta');
-    const nameIn = $('panel').querySelector('input');
+    const nameIn = $('boardInner').querySelector('.core-name-input');
     if (nameIn) { nameIn.focus(); nameIn.select(); }
 }
 
@@ -1874,18 +1837,24 @@ const AGENT_TOOLS = [
     {
         name: 'show_item',
         title: 'Show part of the context layer',
-        description: 'Opens one part of the context layer on the canvas so the user sees it: "core" (name and file), a core section (about, style, defaults, rules) or a knowledge map entry by id or title.',
+        description: 'Shows one part of the context layer on the canvas so the user sees it: "core" (the name) or a core section (about, style, defaults, rules) gets the cursor in place, and a knowledge map entry (by id or title) opens in the side panel.',
         inputSchema: { type: 'object', properties: { item: { type: 'string' } }, required: ['item'] },
         annotations: { readOnlyHint: true },
         execute: async ({ item } = {}) => {
             if (!ctx) return NO_CTX;
             const r = clean(item);
-            let ref = r === 'core' ? 'meta' : (secByKey(r) ? 's:' + r : null);
-            if (!ref) { const e = findEntry(item); if (e) ref = 'e:' + e.id; }
-            if (!ref) return { error: `Nothing called “${item}”. Use core, ${SECTION_KEYS.join(', ')} or an entry id or title.` };
+            if (r === 'core' || secByKey(r)) {
+                revealChanges();
+                select(null);
+                const el = $('boardInner').querySelector(r === 'core' ? '.core-name-input' : `.sec-row[data-sec="${r}"] .sec-edit`);
+                if (el) { el.focus(); el.scrollIntoView({ block: 'nearest' }); }
+                return { shown: r };
+            }
+            const e = findEntry(item);
+            if (!e) return { error: `Nothing called “${item}”. Use core, ${SECTION_KEYS.join(', ')} or an entry id or title.` };
             revealChanges();
-            select(ref);
-            return { shown: ref === 'meta' ? 'core' : ref.slice(2) };
+            select('e:' + e.id);
+            return { shown: e.id };
         }
     },
     {
