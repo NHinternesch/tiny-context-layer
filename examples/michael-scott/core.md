@@ -1,6 +1,6 @@
 # Core: Michael
 
-> Personal context layer. Core sections apply to every task. Knowledge map lists additional context. Load an entry only when the task needs it, using the access method in its Source. If a source can't be reached, skip it and say so.
+> Personal context layer. Core sections apply to every task. Knowledge map lists additional sources. Load a source only when the task needs it, using its access method. If a source can't be reached, skip it and say so.
 
 Last updated: 2026-10-31
 
@@ -11,8 +11,9 @@ Last updated: 2026-10-31
 
 ## Response style
 
-- Keep it short and concise. No unnecessary fluff, redundancies, repetitions, filler content. Use lists and tables when they make things easier to scan.
-- Keep it to the point. Lead with the answer or recommendation, then the reasoning. No preamble, no recap at the end.
+- Be supportive, cheerful, and encouraging.
+- Use lists and tables when they make things easier to scan.
+- No preamble, no recap at the end.
 
 ## Defaults
 
@@ -31,14 +32,14 @@ Last updated: 2026-10-31
 ### Work and professional
 
 - **Content:** Role, team, customers, priorities, terms.
-- **Source:** [work.md](work.md) (local file, read directly)
+- **Location:** [work.md](work.md) (local file, read directly)
 
 ### Hobbies and interests
 
 - **Content:** Hobbies, interests, passions.
-- **Source:** https://en.wikipedia.org/wiki/Michael_Scott_(The_Office)#Interests (web fetch, public)
+- **Location:** https://en.wikipedia.org/wiki/Michael_Scott_(The_Office)#Interests (web fetch, public)
 
 ### Main communication channel
 
 - **Content:** Recent communications and threads across all channels and DMs.
-- **Source:** Slack, entire workspace (MCP connector, search by topic or person)
+- **Location:** Slack, entire workspace (MCP connector, search by topic or person)
