@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Tiny Context Layer</title>
-<meta name="description" content="From zero to tiny context layer. Minimal personal context layer for LLMs. Small always-on core with on-demand knowledge map of external sources. No duplications. Plain markdown. For humans and agents.">
+<meta name="description" content="From zero to tiny context layer. Minimal personal context for LLMs. Small always-on core with on-demand knowledge map of external sources. No duplications. Plain markdown. For humans and agents.">
 <link rel="canonical" href="https://nhinternesch.github.io/tiny-context-layer/">
 <meta name="author" content="Nicolas Hinternesch">
 <meta property="og:type" content="website">
@@ -28,7 +28,7 @@
     "featureList": [
         "Interactive canvas for the core and the knowledge map",
         "Knowledge map of sources, each with a type and location",
-        "Module files edited next to the core",
+        "Local source files edited in the app",
         "Export as core.md, AGENTS.md or CLAUDE.md plus module files",
         "WebMCP tools for browser agents"
     ],
@@ -445,7 +445,7 @@ pre.code {
     <main class="start-main">
         <svg class="hero" id="hero" viewBox="-250 -150 500 285" role="img" aria-label="A core layer that is always on, with sources loaded on demand"></svg>
         <h1 class="display">From zero to<br>tiny context layer</h1>
-        <p class="lede">Minimal personal context layer for LLMs. Small <span style="white-space:nowrap">always-on</span> core with <span style="white-space:nowrap">on-demand</span> knowledge map of external sources. No duplications. Plain markdown. For humans and agents.</p>
+        <p class="lede">Minimal personal context for LLMs. Small <span style="white-space:nowrap">always-on</span> core with <span style="white-space:nowrap">on-demand</span> knowledge map of external sources. No duplications. Plain markdown. For humans and agents.</p>
         <div class="cta">
             <button class="btn btn-primary btn-lg" id="btnStartBlank">Start blank</button>
             <button class="btn btn-lg" id="btnExample">Start from example</button>
@@ -727,14 +727,17 @@ function commit(opts) {
 /* ================================================================
    Markdown out: core file and module files
    ================================================================ */
+// Local source files live in one folder in the user's home directory, unless a location gives a full path.
+const FILES_DIR = '~/tiny-context-layer-files/';
 function moduleFile(e) {
     let f = String(e.location || '').trim() || slugify(e.title) + '.md';
     if (!/\.md$/i.test(f)) f += '.md';
     return f;
 }
+const filePath = e => { const f = moduleFile(e); return f.includes('/') ? f : FILES_DIR + f; };
 function locationMd(e) {
     let loc = String(e.location || '').trim();
-    if (e.kind === 'file') { const f = moduleFile(e); loc = `[${basename(f)}](${f.replace(/ /g, '%20')})`; }
+    if (e.kind === 'file') loc = filePath(e);
     const via = KINDS[e.kind].via;
     return loc && via ? `${loc} (${via})` : loc;
 }
@@ -848,6 +851,7 @@ function parseLocation(text) {
     loc = loc.replace(/^`(.*)`$/, '$1').replace(/^<(.*)>$/, '$1');
     const kind = inferKind(loc, m ? m[2] : '');
     if (m && kind === 'other') return { location: text.trim(), kind };
+    if (kind === 'file' && loc.startsWith(FILES_DIR)) loc = loc.slice(FILES_DIR.length);
     const extra = m ? m[2].split(',').map(x => x.trim()).filter(x => x && !TYPE_WORDS.test(x)).join(', ') : '';
     // A local file's location is its file name, so extras stay out of it.
     if (extra && kind !== 'file') loc += ', ' + extra;
@@ -1167,9 +1171,9 @@ function renderSrcKind() {
 function updateSrcNote() {
     const name = $('srcName').value.trim();
     $('srcNote').textContent = draft.kind === 'file' && name && !$('srcLoc').value.trim()
-        ? `Saved as ${slugify(name)}.md next to ${ctx.coreFile}.` : '';
+        ? `Saved as ${FILES_DIR}${slugify(name)}.md.` : '';
 }
-// A local file ships next to the core, so its sections are written here too.
+// A local file is written in the app, so its sections are edited here too.
 function renderSrcFile(focusLast) {
     const box = $('srcFile');
     box.textContent = '';
@@ -1185,7 +1189,7 @@ function renderSrcFile(focusLast) {
     });
     box.append(
         h('div', { class: 'section-title' }, h('span', null, 'File')),
-        draft.sections.length ? mods : h('p', { class: 'form-note', style: 'margin:0 0 10px' }, 'This file ships next to ' + ctx.coreFile + '. Give it a few sections.'),
+        draft.sections.length ? mods : h('p', { class: 'form-note', style: 'margin:0 0 10px' }, 'A Markdown file you export with the core. Give it a few sections.'),
         h('div', { class: 'row', style: 'margin-top:10px' },
             h('button', { type: 'button', class: 'btn btn-sm', onclick: () => { draft.sections.push({ heading: '', points: [] }); renderSrcFile(true); } }, '+ Add section')));
     requestAnimationFrame(() => box.querySelectorAll('textarea').forEach(autosize));
@@ -1279,7 +1283,8 @@ function renderExport() {
     box.append(
         closeX('dlgExport'),
         h('h2', null, 'Export and integration'),
-        h('p', { class: 'sub' }, 'Paste core.md as system prompt. Local files live in the same directory.'),
+        h('p', { class: 'sub', style: files.length > 1 ? 'margin-bottom:6px' : null }, `Paste ${ctx.coreFile} as system prompt, instructions, preferences, CLAUDE.md, AGENTS.md etc.`),
+        files.length > 1 ? h('p', { class: 'sub' }, `Local source files default to ${FILES_DIR} in your user directory. Update ${ctx.coreFile} with custom locations.`) : null,
         h('div', { class: 'quick' }, copyCore, dlAll),
         h('div', { class: 'files' }, fileRows));
 }
@@ -1569,7 +1574,7 @@ async function loadFromUrl(src) {
     const files = [core];
     for (const e of first.ctx.sources) {
         if (e.kind !== 'file') continue;
-        try { files.push({ name: basename(moduleFile(e)), text: await fetchText(new URL(moduleFile(e), base)) }); }
+        try { files.push({ name: basename(moduleFile(e)), text: await fetchText(new URL(basename(moduleFile(e)), base)) }); }
         catch (err) { /* a missing module file leaves its source without sections */ }
     }
     return parseFiles(files);
@@ -1607,7 +1612,7 @@ function findSource(ref) {
 }
 function sourceInfo(e) {
     const o = { id: e.id, title: e.title, content: e.content, kind: e.kind, location: e.location };
-    if (e.kind === 'file') o.file = { name: moduleFile(e), updated: e.updated, sections: e.sections.map(x => ({ heading: x.heading, points: x.points })) };
+    if (e.kind === 'file') o.file = { name: filePath(e), updated: e.updated, sections: e.sections.map(x => ({ heading: x.heading, points: x.points })) };
     return o;
 }
 function contextJson() {
@@ -1630,8 +1635,8 @@ function setKind(e, kind) {
 const SOURCE_PROPS = {
     title: { type: 'string', description: 'Short name, e.g. "Work and professional"' },
     content: { type: 'string', description: 'What the source holds, e.g. "Role, team, customers, priorities". Not a summary of it: the source stays the only point of truth.' },
-    kind: { type: 'string', enum: KIND_KEYS, description: 'file: a Markdown file shipped next to the core. web: a page agents fetch. connector: a tool reached through MCP or an app connector. other: anything else.' },
-    location: { type: 'string', description: 'Where it lives, plus anything agents need to reach it. file: a file name like work.md. web: a URL. connector: what to reach and how, e.g. "Slack, entire workspace, search by topic or person".' },
+    kind: { type: 'string', enum: KIND_KEYS, description: 'file: a Markdown file exported with the core, saved in ~/tiny-context-layer-files/ by default. web: a page agents fetch. connector: a tool reached through MCP or an app connector. other: anything else.' },
+    location: { type: 'string', description: 'Where it lives, plus anything agents need to reach it. file: a file name like work.md (in ~/tiny-context-layer-files/), or a full path. web: a URL. connector: what to reach and how, e.g. "Slack, entire workspace, search by topic or person".' },
     file_sections: { type: 'array', description: 'Only for kind file: the sections of its Markdown file. Replaces the existing ones.',
         items: { type: 'object', properties: { heading: { type: 'string' }, points: { type: 'array', items: { type: 'string' } } }, required: ['heading'] } }
 };
@@ -1684,7 +1689,7 @@ const AGENT_TOOLS = [
     {
         name: 'add_source',
         title: 'Add a knowledge map source',
-        description: 'Adds a source to the knowledge map: a pointer to context that agents load only when a task needs it. Point to the existing source of truth (a file, a page, a connector) instead of copying its content. Local-file sources ship as their own Markdown file next to the core; give them file_sections.',
+        description: 'Adds a source to the knowledge map: a pointer to context that agents load only when a task needs it. Point to the existing source of truth (a file, a page, a connector) instead of copying its content. Local-file sources are exported as their own Markdown file; give them file_sections.',
         inputSchema: { type: 'object', properties: SOURCE_PROPS, required: ['title'] },
         execute: async ({ title, content, kind, location, file_sections } = {}) => {
             if (!ctx) return NO_CTX;

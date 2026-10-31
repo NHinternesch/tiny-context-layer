@@ -32,7 +32,7 @@ Last updated: 2026-10-31
 ### Work and professional
 
 - **Content:** Role, team, customers, priorities, terms.
-- **Location:** [work.md](work.md) (local file)
+- **Location:** ~/tiny-context-layer-files/work.md (local file)
 
 ### Hobbies and interests
 
