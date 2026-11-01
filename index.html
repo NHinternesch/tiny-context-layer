@@ -1312,13 +1312,14 @@ function renderExport() {
             det);
     });
 
-    box.append(
+    box.append(...[
         closeX('dlgExport'),
         h('h2', null, 'Export and integration'),
         h('p', { class: 'sub', style: files.length > 1 ? 'margin-bottom:6px' : null }, `Paste ${ctx.coreFile} as system prompt, instructions, preferences, CLAUDE.md, AGENTS.md etc.`),
         files.length > 1 ? h('p', { class: 'sub' }, `Local source files default to ${FILES_DIR} in user directory. Update ${ctx.coreFile} with custom locations.`) : null,
         h('div', { class: 'files' }, fileRows),
-        h('div', { class: 'quick' }, dlAll));
+        h('div', { class: 'quick' }, dlAll)
+    ].filter(Boolean));
 }
 
 /* ----- Open ----- */
