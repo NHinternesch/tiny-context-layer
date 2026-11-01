@@ -1,12 +1,8 @@
 # Work and professional: Michael
 
-> Part of Michael's personal context, loaded from the Knowledge map in core.md. The instructions in core.md still apply.
+> Part of Michael's personal context layer. The core's instructions still apply.
 
-Last updated: 2026-10-31
-
-## Role
-
-- Regional Manager, Dunder Mifflin
+Last updated: 2026-11-01
 
 ## Company
 
