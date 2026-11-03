@@ -552,7 +552,7 @@ const KINDS = {
     file: { label: 'Local file', via: 'local file', ph: 'e.g. work.md' },
     web: { label: 'Web fetch', via: 'web fetch', ph: 'https://…' },
     connector: { label: 'Connector', via: 'MCP connector', ph: 'e.g. Slack, entire workspace, search by topic or person' },
-    other: { label: 'Other', via: '', ph: 'Where it lives and how to reach it' }
+    other: { label: 'Other', via: 'other', ph: 'Where it lives and how to reach it' }
 };
 const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 // Three stacked layers: the filled core on top, the knowledge map and its sources below.
@@ -619,6 +619,10 @@ function h(tag, attrs, ...kids) {
         else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2), v);
         else el.setAttribute(k, v === true ? '' : v);
     }
+    return appendKids(el, kids);
+}
+// Appends nodes and text, skipping null and false, so conditional children can be written inline.
+function appendKids(el, ...kids) {
     for (const kid of kids.flat(Infinity)) {
         if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
     }
@@ -655,6 +659,8 @@ function isTyping() {
 }
 const basename = p => String(p).split('/').pop();
 const linesOf = v => String(v).split('\n').map(l => l.trim().replace(/^[-*+]\s+/, '')).filter(Boolean);
+// Titles, content, locations and headings are one line in the Markdown; a line break would start a new block.
+const oneLine = v => String(v == null ? '' : v).replace(/\s*[\r\n]+\s*/g, ' ').trim();
 const tokenCount = text => Math.max(1, Math.round(text.length / 4));
 function logoEl() { const sp = h('span'); sp.innerHTML = LOGO; return sp.firstChild; }
 
@@ -692,7 +698,7 @@ function addSource(c, o) {
     const e = {
         id: uniqueId(slugify(title), new Set(c.sources.map(x => x.id))),
         title, content: o.content || '', kind,
-        location: o.location != null ? o.location : (kind === 'file' ? slugify(title) + '.md' : ''),
+        location: o.location != null ? o.location : (kind === 'file' ? freeFileName(c, title) : ''),
         updated: o.updated || today(),
         sections: o.sections || []
     };
@@ -734,6 +740,20 @@ function moduleFile(e) {
     return f;
 }
 const filePath = e => { const f = moduleFile(e); return f.includes('/') ? f : FILES_DIR + f; };
+// Every file is exported into one folder under its file name, so two sources can't share one or take a core file's.
+const exportName = e => basename(moduleFile(e));
+function fileClash(c, name, except) {
+    const n = name.toLowerCase();
+    return CORE_FILES.some(f => f.toLowerCase() === n)
+        || c.sources.some(x => x !== except && x.kind === 'file' && exportName(x).toLowerCase() === n);
+}
+function freeFileName(c, title, except) {
+    const base = slugify(title);
+    let name = base + '.md', i = 2;
+    while (fileClash(c, name, except)) name = `${base}-${i++}.md`;
+    return name;
+}
+const clashError = name => ({ error: `Another file is already called ${name}. Use a different file name.` });
 function locationMd(e) {
     let loc = String(e.location || '').trim();
     if (e.kind === 'file') loc = filePath(e);
@@ -771,20 +791,21 @@ function moduleMd(c, e) {
     }
     return L.join('\n').trimEnd() + '\n';
 }
+// [{ name, text, source? }]. A file source whose name is already taken is left out; the export dialog says so.
 function exportFiles() {
-    const files = [{ name: ctx.coreFile, get: () => coreMd(ctx) }];
+    const files = [{ name: ctx.coreFile, text: coreMd(ctx) }];
     const seen = new Set([ctx.coreFile.toLowerCase()]);
     for (const e of ctx.sources) {
         if (e.kind !== 'file') continue;
-        const name = basename(moduleFile(e));
+        const name = exportName(e);
         if (seen.has(name.toLowerCase())) continue;
         seen.add(name.toLowerCase());
-        files.push({ name, get: () => moduleMd(ctx, e) });
+        files.push({ name, text: moduleMd(ctx, e), source: e });
     }
     return files;
 }
 
-function exportHash() { return hash(exportFiles().map(f => f.name + '\n' + f.get()).join('\n')); }
+function exportHash(files = exportFiles()) { return hash(files.map(f => f.name + '\n' + f.text).join('\n')); }
 function exportState() {
     let rec = null;
     try { rec = JSON.parse(lsGet(LS.exported) || 'null'); } catch (e) { rec = null; }
@@ -792,8 +813,8 @@ function exportState() {
     if (rec.h === exportHash()) return rec.kind === 'opened' ? 'opened' : 'current';
     return 'changed';
 }
-function markExported(kind) {
-    lsSet(LS.exported, JSON.stringify({ h: exportHash(), kind: kind || 'exported' }));
+function markExported(kind, files) {
+    lsSet(LS.exported, JSON.stringify({ h: exportHash(files), kind: kind || 'exported' }));
 }
 
 function downloadText(filename, text) {
@@ -839,15 +860,15 @@ function zipBlob(files) {
     return new Blob([...local, ...central, end], { type: 'application/zip' });
 }
 const FOLDER = FILES_DIR.replace(/^~\//, '').replace(/\/$/, '');
-function downloadAll() {
-    const blob = zipBlob(exportFiles().map(f => ({ name: FOLDER + '/' + f.name, text: f.get() })));
+function downloadAll(files = exportFiles()) {
+    const blob = zipBlob(files.map(f => ({ name: FOLDER + '/' + f.name, text: f.text })));
     const url = URL.createObjectURL(blob);
     const a = h('a', { href: url, download: FOLDER + '.zip', style: 'display:none' });
     (document.querySelector('dialog[open]') || document.body).append(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 4000);
-    markExported();
+    markExported('exported', files);
 }
 async function copyText(text) {
     try { await navigator.clipboard.writeText(text); return true; }
@@ -886,15 +907,17 @@ function inferKind(loc, via) {
     return 'other';
 }
 // "<location> (<type>)". The bracket gives the type; anything else in it moves into the location.
-const TYPE_WORDS = /^(local\s+)?file$|^web(\s+fetch)?$|^fetch$|^(mcp\s+)?(connector|server)$|^mcp$/i;
+const TYPE_WORDS = /^(local\s+)?file$|^web(\s+fetch)?$|^fetch$|^(mcp\s+)?(connector|server)$|^mcp$|^other$/i;
 function parseLocation(text) {
     const m = text.match(/^(.*?)\s+\(([^()]*)\)\s*$/);
     let loc = (m ? m[1] : text).trim();
     const link = loc.match(/^\[([^\]]*)\]\(([^)]*)\)$/);
     if (link) { try { loc = decodeURI(link[2]); } catch (e) { loc = link[2]; } }
     loc = loc.replace(/^`(.*)`$/, '$1').replace(/^<(.*)>$/, '$1');
-    const kind = inferKind(loc, m ? m[2] : '');
-    if (m && kind === 'other') return { location: text.trim(), kind };
+    // "(other)" names the type outright, so a URL or .md location doesn't turn it into a web page or file.
+    const saysOther = m && /^\s*other\s*$/i.test(m[2]);
+    const kind = saysOther ? 'other' : inferKind(loc, m ? m[2] : '');
+    if (m && kind === 'other' && !saysOther) return { location: text.trim(), kind };
     if (kind === 'file' && loc.startsWith(FILES_DIR)) loc = loc.slice(FILES_DIR.length);
     const extra = m ? m[2].split(',').map(x => x.trim()).filter(x => x && !TYPE_WORDS.test(x)).join(', ') : '';
     // A local file's location is its file name, so extras stay out of it.
@@ -1149,7 +1172,7 @@ function showBanner(title) {
     b.textContent = '';
     b.append(
         h('span', null, 'Exploring the ', h('b', null, title), ' example.'),
-        h('button', { class: 'btn btn-sm', onclick: () => { clearAll(); startBlank(); } }, 'Start blank'),
+        h('button', { class: 'btn btn-sm', onclick: async () => { if (await okToReplace()) startBlank(); } }, 'Start blank'),
         h('button', { class: 'btn btn-ghost btn-sm btn-icon', 'aria-label': 'Dismiss', onclick: () => { lsDel(LS.example); b.hidden = true; queueLinks(); } }, '×'));
     b.hidden = false;
 }
@@ -1173,8 +1196,11 @@ document.querySelectorAll('dialog').forEach(d => {
 });
 const closeX = id => h('button', { type: 'button', class: 'x-close', 'aria-label': 'Close', onclick: () => closeDialog(id) }, '×');
 
+// One confirm dialog serves every question, so questions wait their turn: an agent's question
+// can't take over the user's open one, and each answer resolves only its own question.
+let confirmQueue = Promise.resolve();
 function confirmBox(title, body, okLabel) {
-    return new Promise(resolve => {
+    const ask = () => new Promise(resolve => {
         const d = $('dlgConfirm');
         $('cfTitle').textContent = title;
         $('cfBody').textContent = body;
@@ -1183,6 +1209,9 @@ function confirmBox(title, body, okLabel) {
         d.addEventListener('close', () => resolve(d.returnValue === 'ok'), { once: true });
         openDialog('dlgConfirm');
     });
+    const answer = confirmQueue.then(ask);
+    confirmQueue = answer.catch(() => {});
+    return answer;
 }
 
 /* ----- Source: add one, or edit one from its card ----- */
@@ -1215,7 +1244,7 @@ function renderSrcKind() {
 function updateSrcNote() {
     const name = $('srcName').value.trim();
     $('srcNote').textContent = draft.kind === 'file' && name && !$('srcLoc').value.trim()
-        ? `Saved as ${FILES_DIR}${slugify(name)}.md.` : '';
+        ? `Saved as ${FILES_DIR}${freeFileName(ctx, name, editing)}.` : '';
 }
 // A local file is written in the app, so its sections are edited here too.
 function renderSrcFile(focusLast) {
@@ -1247,10 +1276,15 @@ $('srcForm').addEventListener('submit', ev => {
     const location = $('srcLoc').value.trim(), content = $('srcContent').value.trim();
     const sections = draft.sections.filter(x => x.heading || x.points.length);
     const e = editing;
+    if (draft.kind === 'file' && location && fileClash(ctx, exportName({ location }), e)) {
+        $('srcNote').textContent = clashError(exportName({ location })).error;
+        $('srcLoc').focus();
+        return;
+    }
     if (e) {
         const was = JSON.stringify([e.title, e.kind, e.location, e.content, e.sections]);
         Object.assign(e, { title, kind: draft.kind, location, content, sections });
-        if (e.kind === 'file' && !e.location) e.location = slugify(title) + '.md';
+        if (e.kind === 'file' && !e.location) e.location = freeFileName(ctx, title, e);
         if (JSON.stringify([e.title, e.kind, e.location, e.content, e.sections]) !== was) touch(e);
     } else {
         addSource(ctx, { title, kind: draft.kind, location: location || undefined, content, sections });
@@ -1262,7 +1296,8 @@ $('srcDelete').addEventListener('click', async () => {
     const e = editing;
     if (!e) return;
     const ok = await confirmBox(`Delete “${e.title}”?`, `It’s removed from the knowledge map${e.kind === 'file' ? ', with its file' : ''}. This can’t be undone.`, 'Delete');
-    if (!ok) return;
+    // While the question waited, the layer may have been replaced or the source removed.
+    if (!ok || !ctx || !ctx.sources.includes(e)) return;
     ctx.sources = ctx.sources.filter(y => y !== e);
     closeDialog('dlgSource');
     commit();
@@ -1287,17 +1322,19 @@ function openExport() {
 function renderExport() {
     const box = $('exportBody');
     box.textContent = '';
+    // The dialog is modal, so the files can't change while it's open.
     const files = exportFiles();
-    const dlAll = h('button', { class: 'btn btn-primary', onclick: () => { downloadAll(); flash(dlAll, `Downloading ${FOLDER}.zip…`); } }, 'Download all files');
+    const dlAll = h('button', { class: 'btn btn-primary', onclick: () => { downloadAll(files); flash(dlAll, `Downloading ${FOLDER}.zip…`); } }, 'Download all files');
+    // Copying or downloading every file one by one counts as an export too.
+    const done = new Set();
+    const exported = name => { done.add(name); if (done.size === files.length) markExported('exported', files); };
 
     const fileRows = files.map(f => {
-        const text = f.get();
-        const size = text.length < 1024 ? text.length + ' B' : (text.length / 1024).toFixed(1) + ' KB';
-        const pre = h('pre', { class: 'code' });
-        const det = h('details', null, h('summary', null, 'Preview'), pre);
-        det.addEventListener('toggle', () => { if (det.open) pre.textContent = f.get(); });
+        const bytes = new Blob([f.text]).size;
+        const size = bytes < 1024 ? bytes + ' B' : (bytes / 1024).toFixed(1) + ' KB';
         const copyBtn = h('button', { class: 'btn btn-sm', onclick: async () => {
-            const ok = await copyText(f.get());
+            const ok = await copyText(f.text);
+            if (ok) exported(f.name);
             flash(copyBtn, ok ? 'Copied' : 'Failed');
         } }, 'Copy');
         return h('div', { class: 'file' },
@@ -1305,21 +1342,21 @@ function renderExport() {
                 h('div', null, h('span', { class: 'file-name' }, f.name), h('span', { class: 'file-size' }, size)),
                 h('div', { class: 'file-actions' },
                     copyBtn,
-                    h('button', { class: 'btn btn-sm', onclick: () => {
-                        downloadText(f.name, f.get());
-                        if (files.length === 1) markExported();
-                    } }, 'Download'))),
-            det);
+                    h('button', { class: 'btn btn-sm', onclick: () => { downloadText(f.name, f.text); exported(f.name); } }, 'Download'))),
+            h('details', null, h('summary', null, 'Preview'), h('pre', { class: 'code' }, f.text)));
     });
 
-    box.append(...[
+    const skipped = ctx.sources.filter(e => e.kind === 'file' && !files.some(f => f.source === e));
+    const notes = [`Paste ${ctx.coreFile} as system prompt, instructions, preferences, CLAUDE.md, AGENTS.md etc.`];
+    if (files.length > 1) notes.push(`Local source files default to ${FILES_DIR} in user directory. Update ${ctx.coreFile} with custom locations.`);
+    if (skipped.length) notes.push(`Not exported: ${skipped.map(e => '“' + e.title + '”').join(', ')}. Another file has the same name, so give ${skipped.length === 1 ? 'it' : 'them'} a different location.`);
+
+    appendKids(box,
         closeX('dlgExport'),
         h('h2', null, 'Export and integration'),
-        h('p', { class: 'sub', style: files.length > 1 ? 'margin-bottom:6px' : null }, `Paste ${ctx.coreFile} as system prompt, instructions, preferences, CLAUDE.md, AGENTS.md etc.`),
-        files.length > 1 ? h('p', { class: 'sub' }, `Local source files default to ${FILES_DIR} in user directory. Update ${ctx.coreFile} with custom locations.`) : null,
+        notes.map((t, i) => h('p', { class: 'sub', style: i < notes.length - 1 ? 'margin-bottom:6px' : null }, t)),
         h('div', { class: 'files' }, fileRows),
-        h('div', { class: 'quick' }, dlAll)
-    ].filter(Boolean));
+        h('div', { class: 'quick' }, dlAll));
 }
 
 /* ----- Open ----- */
@@ -1438,7 +1475,7 @@ function renderContinue() {
 const isEmptyCtx = c => !c.sources.length && !c.sections.some(x => x.points.length);
 // Ask before replacing a context layer that has unexported changes.
 async function okToReplace() {
-    if (!ctx || isEmptyCtx(ctx) || lsGet(LS.example)) return true;
+    if (!ctx || isEmptyCtx(ctx)) return true;
     const st = exportState();
     if (st === 'current' || st === 'opened') return true;
     return confirmBox('Replace your context layer?', `“Core: ${ctx.name}” has changes that aren’t exported. Starting over clears it from this browser.`, 'Replace it');
@@ -1458,9 +1495,10 @@ $('btnContinue').addEventListener('click', () => showScreen('app'));
 $('btnStartBlank').addEventListener('click', async () => { if (await okToReplace()) startBlank(); });
 $('btnExample').addEventListener('click', async () => { if (await okToReplace()) loadExample(EXAMPLES[0]); });
 function loadExample(x) {
-    lsDel(LS.exported);
     setCtx(exampleCtx(x));
     lsSet(LS.example, x.title);
+    // Untouched, the example can be replaced without a warning; once edited, it's the user's own work.
+    markExported('opened');
     showBanner(x.title);
     queueLinks();
 }
@@ -1655,15 +1693,16 @@ function contextJson() {
         sources: ctx.sources.map(sourceInfo)
     };
 }
-const asPoints = v => Array.isArray(v) ? v.map(x => String(x).trim()).filter(Boolean) : linesOf(v == null ? '' : v);
-const asSections = v => (Array.isArray(v) ? v : []).map(x => ({ heading: String((x && x.heading) || '').trim(), points: asPoints(x && x.points) }))
+// A point with line breaks becomes several points, as it would when typed into the canvas.
+const asPoints = v => (Array.isArray(v) ? v : [v]).flatMap(x => linesOf(x == null ? '' : x));
+const asSections = v => (Array.isArray(v) ? v : []).map(x => ({ heading: oneLine(x && x.heading), points: asPoints(x && x.points) }))
     .filter(x => x.heading || x.points.length);
 function revealChanges() { if ($('app').hidden) showScreen('app'); }
 // A local file needs a file name; without one it is made from the title.
 function setKind(e, kind) {
     if (!KINDS[kind] || kind === e.kind) return;
-    if (kind === 'file' && !e.location) e.location = slugify(e.title) + '.md';
     e.kind = kind;
+    if (kind === 'file' && !e.location) e.location = freeFileName(ctx, e.title, e);
 }
 const SOURCE_PROPS = {
     title: { type: 'string', description: 'Short name, e.g. "Work and professional"' },
@@ -1683,7 +1722,7 @@ const AGENT_TOOLS = [
         execute: async ({ format } = {}) => {
             if (!ctx) return NO_CTX;
             if (format === 'json') return contextJson();
-            return { files: exportFiles().map(f => ({ name: f.name, text: f.get() })) };
+            return { files: exportFiles().map(f => ({ name: f.name, text: f.text })) };
         }
     },
     {
@@ -1712,7 +1751,7 @@ const AGENT_TOOLS = [
         inputSchema: { type: 'object', properties: { name: { type: 'string' }, core_file: { type: 'string', enum: CORE_FILES } } },
         execute: async ({ name, core_file } = {}) => {
             if (!ctx) return NO_CTX;
-            const n = String(name == null ? '' : name).trim();
+            const n = oneLine(name);
             if (n) ctx.name = n;
             if (CORE_FILES.includes(core_file)) ctx.coreFile = core_file;
             commit();
@@ -1726,11 +1765,12 @@ const AGENT_TOOLS = [
         inputSchema: { type: 'object', properties: SOURCE_PROPS, required: ['title'] },
         execute: async ({ title, content, kind, location, file_sections } = {}) => {
             if (!ctx) return NO_CTX;
-            const tt = String(title == null ? '' : title).trim();
+            const tt = oneLine(title);
             if (!tt) return { error: '"title" is required.' };
-            const loc = location == null ? undefined : String(location).trim();
+            const loc = oneLine(location);
             const k = KINDS[kind] ? kind : (loc ? inferKind(loc, '') : 'file');
-            const e = addSource(ctx, { title: tt, content: content ? String(content) : '', kind: k, location: loc || undefined,
+            if (k === 'file' && loc && fileClash(ctx, exportName({ location: loc }))) return clashError(exportName({ location: loc }));
+            const e = addSource(ctx, { title: tt, content: oneLine(content), kind: k, location: loc || undefined,
                 sections: k === 'file' ? asSections(file_sections) : [] });
             commit();
             revealChanges();
@@ -1746,11 +1786,15 @@ const AGENT_TOOLS = [
             if (!ctx) return NO_CTX;
             const e = findSource(source);
             if (!e) return noSource(source);
-            const tt = String(title == null ? '' : title).trim();
+            const loc = location != null ? oneLine(location) : e.location;
+            const k = KINDS[kind] ? kind : e.kind;
+            if (k === 'file' && loc && fileClash(ctx, exportName({ location: loc }), e)) return clashError(exportName({ location: loc }));
+            const tt = oneLine(title);
             if (tt) e.title = tt;
-            if (content != null) e.content = String(content).replace(/\s*\n+\s*/g, ' ');
-            if (location != null) e.location = String(location).trim();
+            if (content != null) e.content = oneLine(content);
+            e.location = loc;
             if (kind != null) setKind(e, kind);
+            if (e.kind === 'file' && !e.location) e.location = freeFileName(ctx, e.title, e);
             if (file_sections != null) e.sections = asSections(file_sections);
             touch(e);
             commit();
@@ -1769,6 +1813,9 @@ const AGENT_TOOLS = [
             if (!e) return noSource(source);
             const ok = await confirmBox(`Remove “${e.title}”?`, `An AI agent wants to remove it from the knowledge map${e.kind === 'file' ? ', with its file' : ''}. This can’t be undone.`, 'Remove');
             if (!ok) return { error: 'The user declined.' };
+            // While the question waited, the layer may have been replaced or the source removed.
+            if (!ctx) return NO_CTX;
+            if (!ctx.sources.includes(e)) return noSource(source);
             ctx.sources = ctx.sources.filter(y => y !== e);
             if (editing === e) closeDialog('dlgSource');
             commit();
@@ -1804,7 +1851,7 @@ const AGENT_TOOLS = [
         description: 'Starts an empty context layer for the given name and shows it. Fill it with set_section and add_source. Replaces the one in this page; if it has unexported changes, the user is asked first.',
         inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'What agents should call the user' } }, required: ['name'] },
         execute: async ({ name } = {}) => {
-            const n = String(name == null ? '' : name).trim();
+            const n = oneLine(name);
             if (!n) return { error: '"name" is required.' };
             if (!(await okToReplace())) return KEPT;
             startFresh(newCtx(n));
@@ -1857,8 +1904,9 @@ const AGENT_TOOLS = [
         inputSchema: { type: 'object', properties: {} },
         execute: async () => {
             if (!ctx) return NO_CTX;
-            downloadAll();
-            return { downloaded: FOLDER + '.zip', files: exportFiles().map(f => FOLDER + '/' + f.name) };
+            const files = exportFiles();
+            downloadAll(files);
+            return { downloaded: FOLDER + '.zip', files: files.map(f => FOLDER + '/' + f.name) };
         }
     }
 ];
